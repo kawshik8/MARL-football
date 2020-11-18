@@ -8,12 +8,12 @@ this network is modified for the google football
 """
 # the convolution layer of deepmind
 class deepmind(nn.Module):
-    def __init__(self):
+    def __init__(self, history=4, nhidden=512, nchannels=4):
         super(deepmind, self).__init__()
-        self.conv1 = nn.Conv2d(16, 32, 8, stride=4)
+        self.conv1 = nn.Conv2d(history*nchannels, 32, 8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
         self.conv3 = nn.Conv2d(64, 32, 3, stride=1)
-        self.fc1 = nn.Linear(32 * 5 * 8, 512)        
+        self.fc1 = nn.Linear(32 * 5 * 8, nhidden)        
         # start to do the init...
         nn.init.orthogonal_(self.conv1.weight.data, gain=nn.init.calculate_gain('relu'))
         nn.init.orthogonal_(self.conv2.weight.data, gain=nn.init.calculate_gain('relu'))
@@ -26,9 +26,11 @@ class deepmind(nn.Module):
         nn.init.constant_(self.fc1.bias.data, 0)
         
     def forward(self, x):
+        # print(x.shape)
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
+        # print(x.shape)
         x = x.view(-1, 32 * 5 * 8)
         x = F.relu(self.fc1(x))
 
@@ -56,9 +58,9 @@ class cnn_net(nn.Module):
         return value, pi
         
 class fc_net(nn.Module):
-    def __init__(self, num_actions):
+    def __init__(self, history, num_actions, nagents = 1, global_state = True):
         super(fc_net, self).__init__()
-        self.fc1 = nn.Linear(115*4, 256)        
+        self.fc1 = nn.Linear(115*history, 256)        
         self.fc2 = nn.Linear(256, 32)        
         self.critic = nn.Linear(32, 1)
         self.actor = nn.Linear(32, num_actions)
@@ -82,3 +84,98 @@ class fc_net(nn.Module):
         value = self.critic(x)
         pi = F.softmax(self.actor(x), dim=1)
         return value, pi
+
+class Critic(nn.Module):
+    def __init__(self, history, dim_action=1, n_agents=1, nhidden=512, nactions = 1, global_state_net=None):
+        super(Critic, self).__init__()
+        self.n_agents = n_agents
+
+        if global_state_net is None:
+            self.state_net = deepmind(history)
+        else:
+            self.state_net = global_state_net
+
+        self.dim_action = dim_action
+        if self.dim_action > 1:
+            self.action_embedding = nn.Embedding(nactions, dim_action)
+
+        self.FC1 = nn.Linear(nhidden + n_agents * dim_action, 256)
+        self.FC2 = nn.Linear(256, 128)
+        self.FC3 = nn.Linear(128, 1)
+
+    # obs: batch_size * obs_dim
+    def forward(self, state, actions):
+
+        # print(state.shape)
+        state = self.state_net(state)
+
+        # print(state.shape)
+        if self.dim_action > 1:
+            actions = self.action_embedding(actions)
+            # print(actions.shape)
+            actions = actions.view(-1, self.n_agents * self.dim_action)
+
+        combined = torch.cat([state, actions], 1)
+        # print(combined.shape, self.dim_action)
+        # print(self.FC1)
+        result = F.relu(self.FC1(combined))
+
+        return self.FC3(F.relu(self.FC2(result)))
+
+
+class Actor(nn.Module):
+    def __init__(self, history, dim_action, nhidden=512, global_state_net=None):
+        super(Actor, self).__init__()
+        
+        if global_state_net is None:
+            self.state_net = deepmind(history)
+        else:
+            self.state_net = global_state_net
+
+        self.FC1 = nn.Linear(nhidden, 256)
+        self.FC2 = nn.Linear(256, dim_action)
+
+    # action output between -2 and 2
+    def forward(self, state):
+
+        state = self.state_net(state)
+
+        result = F.relu(self.FC1(state))
+        result = F.softmax(self.FC2(result), dim=1)
+
+        return result
+
+if __name__=='__main__':
+
+    history = 4
+    nagents = 2
+    batch_size = 16
+    action_dim = 32
+    nactions = 24
+    
+    state_net = deepmind(history)
+    actor = Actor(history, nactions, global_state_net = state_net)
+    critic = Critic(history, action_dim, nagents, nactions = nactions, global_state_net = state_net)
+    actors = [actor for i in range(nagents)]
+    critic = [critic for i in range(nagents)]
+
+    a = torch.rand(batch_size,history*4,72,96)
+    print(a.shape)
+
+    actions = [actors[i](a) for i in range(len(actors))]
+
+    for i in actions:
+        print(i.shape)
+
+    actions = torch.stack(actions,dim=1)
+    print(actions.shape)
+
+    actions = torch.max(actions,dim=-1)[1]
+    print(actions.shape)
+
+    values = [critic[i](a, actions) for i in range(len(actors))]
+    values = torch.stack(values,dim=1).squeeze()
+    print(values.shape)
+
+
+

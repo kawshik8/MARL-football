@@ -3,6 +3,41 @@ import torch
 from torch.distributions.categorical import Categorical
 import random
 import logging
+from collections import namedtuple
+Experience = namedtuple('Experience',
+                        ('states', 'actions', 'next_states', 'rewards'))
+
+# Polyak Averaging
+def soft_update(target, source, t):
+    for target_param, source_param in zip(target.parameters(),
+                                          source.parameters()):
+        target_param.data.copy_(
+            (1 - t) * target_param.data + t * source_param.data)
+
+# Simply copy weights to target network
+def hard_update(target, source):
+    for target_param, source_param in zip(target.parameters(),
+                                          source.parameters()):
+        target_param.data.copy_(source_param.data)
+
+# Replay Buffer
+class ReplayMemory:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
+        self.position = 0
+
+    def push(self, *args):
+        if len(self.memory) < self.capacity:
+            self.memory.append(None)
+        self.memory[self.position] = Experience(*args)
+        self.position = int((self.position + 1) % self.capacity)
+
+    def sample(self, batch_size):
+        return random.sample(self.memory, batch_size)
+
+    def __len__(self):
+        return len(self.memory)
 
 # select actions
 def select_actions(pi):

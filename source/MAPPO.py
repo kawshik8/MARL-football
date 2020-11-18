@@ -12,12 +12,37 @@ class ppo_agent:
         self.envs = envs 
         self.args = args
         # define the newtork...
-        self.net = fc_net(envs.action_space.n)
-        self.old_net = copy.deepcopy(self.net)
+
+        self.global_state_actor = deepmind(args.history, nchannels=4)#Global_State_Net(args.history, nagents=args.n_agents)
+        self.global_state_critic = deepmind(args.history, nchannels=3)#Global_State_Net(args.history, nagents=args.n_agents)
+
+        if args.tie_actor_wts:
+            self.actor = Actor(args.history, 19, global_state_net = self.global_state_actor)
+        if args.tie_critic_wts:
+            self.critic = Critic(args.history, args.action_dim, args.n_agents, nactions = 19, global_state_net = self.global_state_critic)
+
+        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(args.n_agents)]
+        self.critics = [Critic(args.history, args.action_dim, args.n_agents, nactions = 19) if not args.tie_critic_wts else self.critic for i in range(args.n_agents)]
+
+        # print(self.actor)
+        # print(self.critic)
+
+        self.actors_target = copy.deepcopy(self.actors)
+        self.critics_target = copy.deepcopy(self.critics)
+
+
         # if use the cuda...
-        if self.args.cuda:
-            self.net.cuda()
-            self.old_net.cuda()
+        if self.use_cuda:
+            
+            for x in self.actors:
+                x.cuda()
+            self.critics.cuda()
+
+            for x in self.actors_target:
+                x.cuda()
+            self.critics_target.cuda()
+
+
         # define the optimizer...
         self.optimizer = optim.Adam(self.net.parameters(), self.args.lr, eps=self.args.eps)
         # check saving folder..

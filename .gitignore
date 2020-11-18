@@ -3,3 +3,11 @@ source/__pycache__/arguments.cpython-38.pyc
 source/__pycache__/models.cpython-38.pyc
 source/__pycache__/ppo_agent.cpython-38.pyc
 source/__pycache__/utils.cpython-38.pyc
+runs/.DS_Store
+logs/.DS_Store
+.DS_Store
+source/__pycache__/maddpg.cpython-38.pyc
+*.pt
+*.local
+*.avi
+*.dump
