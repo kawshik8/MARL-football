@@ -108,7 +108,8 @@ class MADDPG:
         gradients from the critic loss function multiple times
         """
         for p in model.parameters():
-            p.grad.data.mul_(1. / self.nagents)
+            if p.grad is not None:
+                p.grad.data.mul_(1. / self.n_agents)
 
     def learn(self):
 
@@ -134,7 +135,6 @@ class MADDPG:
             # for step in range(self.args.nsteps):
             for t in range(self.max_steps):
 
-                
                 # print(" obs shape: " ,obs.shape)
                 # for i in range(obs.shape[1]):
                 #     if obs[0][i] != obs[1][i]:
@@ -222,6 +222,11 @@ class MADDPG:
         q_agents = []
         if self.args.tie_critic_wts:
             self.critics_optimizer.zero_grad()
+            loss_Qs = 0
+
+        if self.args.tie_actor_wts:
+            self.actors_optimizer.zero_grad()
+            actor_losses = 0
 
         for agent in range(self.n_agents):
             transitions = self.memory.sample(self.batch_size)
@@ -282,13 +287,18 @@ class MADDPG:
 
             # print(current_Q.shape, target_Q.shape)
             loss_Q = nn.MSELoss()(current_Q, target_Q.detach())
-            loss_Q.backward()
-            torch.nn.utils.clip_grad_norm_(self.critics_target[agent].parameters(), self.args.max_grad_norm)
+            if self.args.tie_critic_wts:
+                loss_Q.backward()
+                torch.nn.utils.clip_grad_norm_(self.critics_target[agent].parameters(), self.args.max_grad_norm )
+            else:
+                loss_Qs += loss_Q
+
             if not self.args.tie_critic_wts:
                 self.critics_optimizer[agent].step()
 
-            if not self.args.tie_critic_wts:
+            if not self.args.tie_actor_wts:
                 self.actors_optimizer[agent].zero_grad()
+
             state_i = state_batch[:, agent, :]
             # print("output of actors: ", self.actors[agent](state_i).shape)
             action_i = F.softmax(self.add_gumbel(self.actors[agent](state_i)),dim=-1)
@@ -298,11 +308,16 @@ class MADDPG:
             # print("action batch and aaction i ", action_batch.shape, action_i.shape, self.add_gumbel(self.actors[agent](state_i))[0], ac.shape)
             ac[:, agent] = action_i
             whole_action = ac.float()
-            actor_loss = -self.critics[agent](whole_state, whole_action)
-            actor_loss = actor_loss.mean()
-            actor_loss.backward()
-            if not self.args.tie_critic_wts:
+
+            actor_loss = -self.critics[agent](whole_state, whole_action).mean()
+            if not self.args.tie_actor_wts:
+                actor_loss.backward()
+            else:
+                actor_losses += actor_loss
+
+            if not self.args.tie_actor_wts:
                 self.actors_optimizer[agent].step()
+
             c_loss.append(loss_Q.detach().item())
             a_loss.append(actor_loss.detach().item())
 
@@ -314,11 +329,11 @@ class MADDPG:
 
         if self.args.tie_critic_wts:
             self.scale_shared_grads(self.critic)
-            self.critics_optimizer[agent].step()
+            self.critics_optimizer.step()
 
         if self.args.tie_actor_wts:
             self.scale_shared_grads(self.actor)
-            self.actors_optimizer[agent].step()
+            self.actors_optimizer.step()
 
         self.num_updates += 1
 

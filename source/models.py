@@ -86,7 +86,7 @@ class fc_net(nn.Module):
         return value, pi
 
 class Critic(nn.Module):
-    def __init__(self, history, dim_action=1, n_agents=1, nhidden=512, nactions = 1, global_state_net=None):
+    def __init__(self, history, dim_action=1, n_agents=1, out_dim=1, nhidden=512, nactions = 1, global_state_net=None):
         super(Critic, self).__init__()
         self.n_agents = n_agents
 
@@ -101,7 +101,7 @@ class Critic(nn.Module):
 
         self.FC1 = nn.Linear(nhidden + n_agents * dim_action, 256)
         self.FC2 = nn.Linear(256, 128)
-        self.FC3 = nn.Linear(128, 1)
+        self.FC3 = nn.Linear(128, out_dim)
 
     # obs: batch_size * obs_dim
     def forward(self, state, actions):
