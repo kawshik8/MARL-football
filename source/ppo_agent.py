@@ -8,11 +8,12 @@ import os
 import copy
 
 class ppo_agent:
-    def __init__(self, envs, args, net):
+    def __init__(self, envs, args):
         self.envs = envs 
         self.args = args
         # define the newtork...
-        self.net = fc_net(envs.action_space.n)
+        # print(envs.action_space.nvec)
+        self.net = cnn_net(args.history, envs.action_space.n)
         self.old_net = copy.deepcopy(self.net)
         # if use the cuda...
         if self.args.cuda:
@@ -52,7 +53,9 @@ class ppo_agent:
                 with torch.no_grad():
                     # get tensors
                     obs_tensor = self._get_tensors(self.obs)
+                    # print(self.obs.shape)
                     values, pis = self.net(obs_tensor)
+                    # print(values.shape, pis.shape)
                 # select actions
                 actions = select_actions(pis)
                 # get the input actions
@@ -175,8 +178,8 @@ class ppo_agent:
 
     # convert the numpy array to tensors
     def _get_tensors(self, obs):
-        #obs_tensor = torch.tensor(np.transpose(obs, (0, 3, 1, 2)), dtype=torch.float32)
-        obs_tensor = torch.tensor(obs, dtype=torch.float32)
+        obs_tensor = torch.tensor(np.transpose(obs, (0, 3, 1, 2)), dtype=torch.float32)
+        # obs_tensor = torch.tensor(obs, dtype=torch.float32)
         # decide if put the tensor on the GPU
         if self.args.cuda:
             obs_tensor = obs_tensor.cuda()

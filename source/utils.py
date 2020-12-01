@@ -2,13 +2,14 @@ import numpy as np
 import torch
 from torch.distributions.categorical import Categorical
 import random
+import torch.nn as nn
 import logging
 from collections import namedtuple
 Experience = namedtuple('Experience',
                         ('states', 'actions', 'next_states', 'rewards'))
 
 # Polyak Averaging
-def soft_update(target, source, t):
+def soft_update(target, source, t=0.005):
     for target_param, source_param in zip(target.parameters(),
                                           source.parameters()):
         target_param.data.copy_(
@@ -41,9 +42,13 @@ class ReplayMemory:
 
 # select actions
 def select_actions(pi):
-    actions = Categorical(pi).sample()
+    print(pi)
+    actions = s
+    print(actions)
     # return actions
     return actions.detach().cpu().numpy().squeeze()
+
+
 
 # evaluate actions
 def evaluate_actions(pi, actions):

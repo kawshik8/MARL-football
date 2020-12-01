@@ -6,10 +6,10 @@ from torch.nn import functional as F
 this network is modified for the google football
 
 """
-# the convolution layer of deepmind
-class deepmind(nn.Module):
+
+class backbone(nn.Module):
     def __init__(self, history=4, nhidden=512, nchannels=4):
-        super(deepmind, self).__init__()
+        super(backbone, self).__init__()
         self.conv1 = nn.Conv2d(history*nchannels, 32, 8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, 4, stride=2)
         self.conv3 = nn.Conv2d(64, 32, 3, stride=1)
@@ -38,11 +38,11 @@ class deepmind(nn.Module):
 
 # in the initial, just the nature CNN
 class cnn_net(nn.Module):
-    def __init__(self, num_actions):
+    def __init__(self, history, num_actions, nhidden=512):
         super(cnn_net, self).__init__()
-        self.cnn_layer = deepmind()
-        self.critic = nn.Linear(512, 1)
-        self.actor = nn.Linear(512, num_actions)
+        self.cnn_layer = backbone(history)
+        self.critic = nn.Linear(nhidden, 1)
+        self.actor = nn.Linear(nhidden, num_actions)
 
         # init the linear layer..
         nn.init.orthogonal_(self.critic.weight.data)
@@ -54,7 +54,7 @@ class cnn_net(nn.Module):
     def forward(self, inputs):
         x = self.cnn_layer(inputs / 255.0)
         value = self.critic(x)
-        pi = F.softmax(self.actor(x), dim=1)
+        pi = self.actor(x)
         return value, pi
         
 class fc_net(nn.Module):
@@ -82,7 +82,7 @@ class fc_net(nn.Module):
         x = F.relu(self.fc2(x))
         
         value = self.critic(x)
-        pi = F.softmax(self.actor(x), dim=1)
+        pi = self.actor(x)
         return value, pi
 
 class Critic(nn.Module):
@@ -91,13 +91,13 @@ class Critic(nn.Module):
         self.n_agents = n_agents
 
         if global_state_net is None:
-            self.state_net = deepmind(history)
+            self.state_net = backbone(history)
         else:
             self.state_net = global_state_net
 
         self.dim_action = dim_action
         if self.dim_action > 1:
-            self.action_embedding = nn.Embedding(nactions, dim_action)
+            self.action_embedding = nn.Linear(nactions, dim_action)
 
         self.FC1 = nn.Linear(nhidden + n_agents * dim_action, 256)
         self.FC2 = nn.Linear(256, 128)
@@ -106,15 +106,17 @@ class Critic(nn.Module):
     # obs: batch_size * obs_dim
     def forward(self, state, actions):
 
-        # print(state.shape)
-        state = self.state_net(state)
+        # print("state: ", state.shape)
+        state = self.state_net(state / 255.0)
 
-        # print(state.shape)
+        # print("state: ", state.shape)
         if self.dim_action > 1:
+            # print(actions.shape, self.action_embedding)
             actions = self.action_embedding(actions)
-            # print(actions.shape)
-            actions = actions.view(-1, self.n_agents * self.dim_action)
+            # print("actions befor .e reshaping: ",actions.shape)
+            actions = actions.view(actions.size(0), self.n_agents * self.dim_action)
 
+        # print("actions after reshaping: ",actions.shape)
         combined = torch.cat([state, actions], 1)
         # print(combined.shape, self.dim_action)
         # print(self.FC1)
@@ -128,7 +130,7 @@ class Actor(nn.Module):
         super(Actor, self).__init__()
         
         if global_state_net is None:
-            self.state_net = deepmind(history)
+            self.state_net = backbone(history)
         else:
             self.state_net = global_state_net
 
@@ -138,12 +140,17 @@ class Actor(nn.Module):
     # action output between -2 and 2
     def forward(self, state):
 
-        state = self.state_net(state)
+        state = self.state_net(state / 255.0)
 
         result = F.relu(self.FC1(state))
-        result = F.softmax(self.FC2(result), dim=1)
+        result = self.FC2(result)
 
         return result
+
+    def sample(self, state):
+        out = self.forward(state)
+
+
 
 if __name__=='__main__':
 
@@ -153,7 +160,7 @@ if __name__=='__main__':
     action_dim = 32
     nactions = 24
     
-    state_net = deepmind(history)
+    state_net = backbone(history)
     actor = Actor(history, nactions, global_state_net = state_net)
     critic = Critic(history, action_dim, nagents, nactions = nactions, global_state_net = state_net)
     actors = [actor for i in range(nagents)]
