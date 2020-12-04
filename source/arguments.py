@@ -22,7 +22,10 @@ def get_args():
     parse.add_argument('--clip', type=float, default=0.27, help='the ratio clip param')
     parse.add_argument('--save-dir', type=str, default='saved_models/', help='the folder to save models')
     parse.add_argument('--lr-decay', action='store_true', help='if using the learning rate decay during decay')
-    parse.add_argument('--max-grad-norm', type=float, default=5.0, help='grad norm')
+
+    parse.add_argument('--max-grad-norm-critic', type=float, default=10.0, help='grad norm')
+    parse.add_argument('--max-grad-norm-actor', type=float, default=0.5, help='grad norm')
+
     parse.add_argument('--display-interval', type=int, default=100, help='the interval that display log information')
     parse.add_argument('--log-dir', type=str, default='logs/')
     parse.add_argument('--soft-update', action='store_true', help='soft update vs hard update')
@@ -41,7 +44,7 @@ def get_args():
     parse.add_argument('--buffer-size', type=int, default=1e6, help='total number of frames in memory')
     parse.add_argument('--alpha', type=float, default=0.2, help='param for alpha value in SAC type algos')
     parse.add_argument('--reward-scale', type=float, default=10.0, help='param for reward scale')
-    parse.add_argument('--start_steps', type=int, default=10000, help='param for start steps from training starts')
+    parse.add_argument('--start-steps', type=int, default=10000, help='param for start steps from training starts')
 
     args = parse.parse_args()
 

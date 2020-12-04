@@ -11,3 +11,7 @@ source/__pycache__/maddpg.cpython-38.pyc
 *.local
 *.avi
 *.dump
+*.log
+*.ckpt
+*.log
+*.pyc

@@ -220,13 +220,14 @@ class MADDPG:
         c_loss = []
         a_loss = []
         q_agents = []
+
         if self.args.tie_critic_wts:
             self.critics_optimizer.zero_grad()
-            loss_Qs = 0
+            loss_Qs = []
 
         if self.args.tie_actor_wts:
             self.actors_optimizer.zero_grad()
-            actor_losses = 0
+            actor_losses = []
 
         for agent in range(self.n_agents):
             transitions = self.memory.sample(self.batch_size)
@@ -287,11 +288,11 @@ class MADDPG:
 
             # print(current_Q.shape, target_Q.shape)
             loss_Q = nn.MSELoss()(current_Q, target_Q.detach())
-            if self.args.tie_critic_wts:
+            if not self.args.tie_critic_wts:
                 loss_Q.backward()
-                torch.nn.utils.clip_grad_norm_(self.critics_target[agent].parameters(), self.args.max_grad_norm )
+                torch.nn.utils.clip_grad_norm_(self.critics[agent].parameters(), self.args.max_grad_norm_critic)
             else:
-                loss_Qs += loss_Q
+                loss_Qs += [loss_Q]
 
             if not self.args.tie_critic_wts:
                 self.critics_optimizer[agent].step()
@@ -312,8 +313,9 @@ class MADDPG:
             actor_loss = -self.critics[agent](whole_state, whole_action).mean()
             if not self.args.tie_actor_wts:
                 actor_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.actors[agent].parameters(), self.args.max_grad_norm_actor)
             else:
-                actor_losses += actor_loss
+                actor_losses += [actor_loss]
 
             if not self.args.tie_actor_wts:
                 self.actors_optimizer[agent].step()
@@ -328,10 +330,17 @@ class MADDPG:
             q_agents.append(torch.mean(current_Q.detach()).item())
 
         if self.args.tie_critic_wts:
+            loss_Q = sum(loss_Qs)
+            # print(loss_Q, loss_Qs)
+            loss_Q.backward()
+            torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.max_grad_norm_critic * self.args.n_agents)
             self.scale_shared_grads(self.critic)
             self.critics_optimizer.step()
 
         if self.args.tie_actor_wts:
+            actor_loss = sum(actor_losses)
+            actor_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.max_grad_norm_actor * self.args.n_agents)
             self.scale_shared_grads(self.actor)
             self.actors_optimizer.step()
 

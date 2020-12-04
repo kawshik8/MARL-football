@@ -88,7 +88,10 @@ class fc_net(nn.Module):
 class Critic(nn.Module):
     def __init__(self, history, dim_action=1, n_agents=1, out_dim=1, nhidden=512, nactions = 1, global_state_net=None):
         super(Critic, self).__init__()
-        self.n_agents = n_agents
+        if out_dim > 1:
+            self.n_agents = n_agents - 1
+        else:
+            self.n_agents = n_agents
 
         if global_state_net is None:
             self.state_net = backbone(history)
@@ -99,7 +102,7 @@ class Critic(nn.Module):
         if self.dim_action > 1:
             self.action_embedding = nn.Linear(nactions, dim_action)
 
-        self.FC1 = nn.Linear(nhidden + n_agents * dim_action, 256)
+        self.FC1 = nn.Linear(nhidden + self.n_agents * dim_action, 256)
         self.FC2 = nn.Linear(256, 128)
         self.FC3 = nn.Linear(128, out_dim)
 
@@ -113,8 +116,9 @@ class Critic(nn.Module):
         if self.dim_action > 1:
             # print(actions.shape, self.action_embedding)
             actions = self.action_embedding(actions)
-            # print("actions befor .e reshaping: ",actions.shape)
+            # print("actions before reshaping: ",actions.shape)
             actions = actions.view(actions.size(0), self.n_agents * self.dim_action)
+
 
         # print("actions after reshaping: ",actions.shape)
         combined = torch.cat([state, actions], 1)

@@ -18,6 +18,7 @@ def create_single_football_env(args):
     #         env_name=args.env_name, representation='extracted', rewards='scoring', write_video=True, write_full_episode_dumps=True, logdir='./logs/videos', dump_frequency=25)#, with_checkpoints=False, 
     #         #)
     env = FrameStack(env,args.history)
+    
     return env
 
 if __name__ == '__main__': 
