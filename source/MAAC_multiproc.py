@@ -39,11 +39,11 @@ class ReplayMemory:
         self.capacity = capacity
         self.history = history 
         self.nagents = nagents
-        self.states = torch.zeros((int(capacity), nagents, history * 4, 72, 96))
-        self.next_states = torch.zeros((int(capacity), nagents, history * 4, 72, 96))
-        self.actions = torch.zeros((int(capacity), nagents))
-        self.rewards = torch.zeros((int(capacity), nagents))
-        self.dones = torch.zeros((int(capacity), nagents))
+        self.states = np.zeros((int(capacity), nagents, history * 4, 72, 96))
+        self.next_states = np.zeros((int(capacity), nagents, history * 4, 72, 96))
+        self.actions = np.zeros((int(capacity), nagents))
+        self.rewards = np.zeros((int(capacity), nagents))
+        self.dones = np.zeros((int(capacity), nagents))
         self.position = 0
         self.current_capacity = 0
         self.lock = lock
@@ -52,11 +52,11 @@ class ReplayMemory:
         # for i in range(states.shape[0]):
 
         self.lock.acquire()
-        self.states[self.position] = torch.from_numpy(states)
-        self.next_states[self.position] = torch.from_numpy(next_states)
-        self.rewards[self.position] = torch.from_numpy(rewards)
+        self.states[self.position] = states
+        self.next_states[self.position] = (next_states)
+        self.rewards[self.position] = (rewards)
         self.dones[self.position] = dones
-        self.actions[self.position] = torch.from_numpy(actions)
+        self.actions[self.position] = (actions)
 
         
         self.position = int((self.position + 1) % self.capacity)
