@@ -86,7 +86,7 @@ class fc_net(nn.Module):
         return value, pi
 
 class Critic(nn.Module):
-    def __init__(self, history, dim_action=1, n_agents=1, out_dim=1, nhidden=512, nactions = 1, global_state_net=None):
+    def __init__(self, history, dim_action=1, n_agents=1, out_dim=1, nhidden=512, nactions = 1, global_state_net=None, use_embedding=False):
         super(Critic, self).__init__()
         if out_dim > 1:
             self.n_agents = n_agents - 1
@@ -100,7 +100,10 @@ class Critic(nn.Module):
 
         self.dim_action = dim_action
         if self.dim_action > 1:
-            self.action_embedding = nn.Linear(nactions, dim_action)
+            if use_embedding:
+                self.action_embedding = nn.Embedding(nactions, dim_action)
+            else:
+                self.action_embedding = nn.Linear(nactions, dim_action)
 
         self.FC1 = nn.Linear(nhidden + self.n_agents * dim_action, 256)
         self.FC2 = nn.Linear(256, 128)

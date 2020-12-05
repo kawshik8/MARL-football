@@ -1,7 +1,7 @@
 from arguments import get_args
 from ppo_agent import ppo_agent
 from maddpg import MADDPG
-from MAPPO import mappo_agent
+
 from models import cnn_net, fc_net
 from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
 import gfootball.env as football_env

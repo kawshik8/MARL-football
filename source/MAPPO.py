@@ -7,6 +7,11 @@ from models import *
 import os
 import copy
 from tensorboardX import SummaryWriter
+from torch.distributions import Categorical
+from arguments import get_args
+from baselines.common.vec_env.subproc_vec_env import SubprocVecEnv
+from train_example import create_single_football_env
+from collections import deque
 
 class mappo_agent:
     def __init__(self, envs, args):
@@ -88,6 +93,8 @@ class mappo_agent:
         # get the reward to calculate other informations
         episode_rewards = torch.zeros([self.args.num_workers, 2])
         final_rewards = torch.zeros([self.args.num_workers, 2])
+
+        running_reward = deque([], maxlen=100)
         for update in range(num_updates):
             mb_obs, mb_rewards, mb_actions, mb_dones, mb_values = [], [], [], [], []
             if self.args.lr_decay:
@@ -101,18 +108,19 @@ class mappo_agent:
                     # select actions
                     actions = [self.actors[i](obs_tensor[:,i]) for i in range(self.n_agents)]
                     # print(actions)
-                    actions = [torch.tensor(select_actions(action), dtype=torch.long) for action in actions]
+                    actions = [torch.tensor(self.select_actions(action), dtype=torch.long) for action in actions]
                     # print(actions)
                     actions = torch.stack(actions,dim=1)
                     # print(actions.shape)
 
                     values = [self.critics[agent](
-                        obs_tensor.reshape(self.batch_size, self.n_agents, self.args.history, 4, 72, 96)[:,agent,:,:3].reshape(self.batch_size, -1, 72, 96),
-                        actions,
+                        obs_tensor.reshape(self.args.num_workers, self.n_agents, self.args.history, 4, 72, 96)[:,agent,:,:3].reshape(self.args.num_workers, -1, 72, 96),
+                        F.one_hot(actions, 19).float(),
                     ).squeeze() for agent in range(self.n_agents)] 
                     values = torch.stack(values,dim=1)
 
-                # get the input actions
+                    # print(obs_tensor.shape, actions.shape, values.shape)
+                # get the input actions 
                 input_actions = actions 
 
                 # start to store information
@@ -124,7 +132,7 @@ class mappo_agent:
 
                 # start to excute the actions in the environment
                 obs, rewards, dones, _ = self.envs.step(input_actions.numpy())
-                print(rewards.shape)
+                # print(rewards.shape)
                 mb_rewards.append(rewards)
 
                 # update dones
@@ -150,57 +158,81 @@ class mappo_agent:
                 final_rewards += (1 - masks) * episode_rewards
                 episode_rewards *= masks
 
-            # process the rollouts
-            mb_obs = np.asarray(mb_obs, dtype=np.float32)
+            # print(episode_rewards)
+            running_reward.append(final_rewards.numpy())
+            # print(running_reward)
+            # print(np.stack(running_reward).shape)
 
-            mb_rewards = np.asarray(mb_rewards, dtype=np.float32)
-            print(mb_rewards.shape)
-            mb_actions = np.asarray(mb_actions, dtype=np.float32)
-            mb_dones = np.asarray(mb_dones, dtype=np.bool)
-            mb_values = np.asarray(mb_values, dtype=np.float32)
-            print(mb_obs.shape, mb_rewards.shape, mb_actions.shape)
-            print(mb_dones.shape, mb_values.shape)
+            # process the rollouts
+            # print("before: ", len(mb_obs), mb_obs[0].shape, len(mb_rewards), mb_rewards[0].shape, len(mb_actions), mb_actions[0].shape, len(mb_dones), mb_dones[0].shape, len(mb_values), mb_values[0].shape)
+
+            mb_obs = np.stack(mb_obs)
+            mb_rewards = np.stack(mb_rewards)
+            mb_actions = np.stack(mb_actions)
+            mb_dones = np.stack(mb_dones)
+            mb_values = np.stack(mb_values)
+            # print("after :", mb_obs.shape, mb_rewards.shape, mb_actions.shape, mb_dones.shape, mb_values.shape)
 
             # compute the last state value
             with torch.no_grad():
                 obs_tensor = self._get_tensors(self.obs)
-                last_values, _ = self.net(obs_tensor)
+                last_values = [self.critics[agent](
+                                                    obs_tensor.reshape(self.args.num_workers, self.n_agents, self.args.history, 4, 72, 96)[:,agent,:,:3].reshape(self.args.num_workers, -1, 72, 96),
+                                                    F.one_hot(actions,19).float(),
+                                                  ).squeeze() for agent in range(self.n_agents)]
+                last_values = torch.stack(last_values,dim=1)
                 last_values = last_values.detach().cpu().numpy().squeeze()
+                # mb_values = np.append(mb_values,last_values)
+
+            # print(mb_values.shape)
 
             # start to compute advantages...
             mb_returns = np.zeros_like(mb_rewards)
             mb_advs = np.zeros_like(mb_rewards)
             lastgaelam = 0
             for t in reversed(range(self.args.nsteps)):
+                # print(t, args.nsteps)
                 if t == self.args.nsteps - 1:
-                    nextnonterminal = 1.0 - self.dones
+                    # print(self.dones.dtype, 1 - self.dones.int())
+                    nextnonterminal = 1.0 - self.dones.numpy()
                     nextvalues = last_values
                 else:
                     nextnonterminal = 1.0 - mb_dones[t + 1]
                     nextvalues = mb_values[t + 1]
-                delta = mb_rewards[t] + self.args.gamma * nextvalues * nextnonterminal - mb_values[t]
-                mb_advs[t] = lastgaelam = delta + self.args.gamma * self.args.tau * nextnonterminal * lastgaelam
+                # print(mb_rewards[t].shape, nextvalues.shape, nextnonterminal.shape, mb_values[t].shape)
+                delta = mb_rewards[t] + self.args.gamma * nextvalues * np.expand_dims(nextnonterminal,axis=-1) - mb_values[t]
+                mb_advs[t] = lastgaelam = delta + self.args.gamma * self.args.tau * np.expand_dims(nextnonterminal,axis=-1) * lastgaelam
             mb_returns = mb_advs + mb_values
 
+            # print("advs, returns :", mb_advs.shape, mb_returns.shape)
             # after compute the returns, let's process the rollouts
             mb_obs = mb_obs.swapaxes(0, 1).reshape(self.batch_ob_shape)
-            mb_actions = mb_actions.swapaxes(0, 1).flatten()
-            mb_returns = mb_returns.swapaxes(0, 1).flatten()
-            mb_advs = mb_advs.swapaxes(0, 1).flatten()
+            mb_actions = mb_actions.swapaxes(0, 1).reshape(-1,2)
+            mb_returns = mb_returns.swapaxes(0, 1).reshape(-1,2)
+            mb_advs = mb_advs.swapaxes(0, 1).reshape(-1,2)
+            # print("after :", mb_obs.shape, mb_actions.shape, mb_returns.shape, mb_advs.shape)
 
             # before update the network, the old network will try to load the weights
-            self.old_net.load_state_dict(self.net.state_dict())
-
+            for a_i in range(self.n_agents):
+                self.hard_update_target_network(self.critics[a_i], self.critics_target[a_i])
+                self.hard_update_target_network(self.actors[a_i], self.actors_target[a_i])
+                
             # start to update the network
             pl, vl, ent = self._update_network(mb_obs, mb_actions, mb_returns, mb_advs)
 
             # display the training information
             if update % self.args.display_interval == 0:
-                self.logger.info('[{}] Update: {} / {}, Frames: {}, Rewards: {:.3f}, Min: {:.3f}, Max: {:.3f}, PL: {:.3f},'\
-                    'VL: {:.3f}, Ent: {:.3f}'.format(datetime.now(), update, num_updates, (update + 1)*self.args.nsteps*self.args.num_workers, \
-                    final_rewards.mean().item(), final_rewards.min().item(), final_rewards.max().item(), pl, vl, ent))
+                self.logger.info('[{}] Update: {} / {}, Frames: {}, Rewards: {:.3f}, Min: {:.3f}, Max: {:.3f}, Running (100) : {:.3f}, PL: {},'\
+                    'VL: {}, Ent: {}'.format(datetime.now(), update, num_updates, (update + 1)*self.args.nsteps*self.args.num_workers, \
+                    final_rewards.mean().item(), final_rewards.min().item(), final_rewards.max().item(), np.mean(np.stack(running_reward)), pl, vl, ent))
                 # save the model
-                torch.save(self.net.state_dict(), self.model_path + '/model.pt')
+                torch.save({"actor": ([self.actors[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.actor.state_dict()), 
+                        "critic": ([self.critics[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.critic.state_dict()),
+                        "actor_opt": ([self.actors_optimizer[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.actors_optimizer.state_dict()),
+                        "critic_opt": ([self.critics_optimizer[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.critics_optimizer.state_dict()),
+                        "num_update": update,
+                        "running_reward": np.mean(np.stack(running_reward),axis=(0,1)),
+                        }, self.model_path + "agent.ckpt")
 
     # update the network
     def _update_network(self, obs, actions, returns, advantages):
@@ -219,8 +251,8 @@ class mappo_agent:
                 # convert minibatches to tensor
                 mb_obs = self._get_tensors(mb_obs)
                 mb_actions = torch.tensor(mb_actions, dtype=torch.float32)
-                mb_returns = torch.tensor(mb_returns, dtype=torch.float32).unsqueeze(1)
-                mb_advs = torch.tensor(mb_advs, dtype=torch.float32).unsqueeze(1)
+                mb_returns = torch.tensor(mb_returns, dtype=torch.float32)
+                mb_advs = torch.tensor(mb_advs, dtype=torch.float32)
                 # normalize adv
                 mb_advs = (mb_advs - mb_advs.mean()) / (mb_advs.std() + 1e-8)
                 if self.args.cuda:
@@ -228,31 +260,108 @@ class mappo_agent:
                     mb_returns = mb_returns.cuda()
                     mb_advs = mb_advs.cuda()
                 # start to get values
-                mb_values, pis = self.net(mb_obs)
+                pis = [self.actors[a_i](mb_obs[:,a_i]) for a_i in range(self.n_agents)]
+                # print("logits: ", pis[0].max(dim=-1)[1])
+                # pis = F.one_hot(torch.arange(10).unsqueeze(0))
+                gumbel_pis = F.gumbel_softmax(logits=torch.stack(pis,dim=1), tau=1, hard=False, eps=1e-10, dim=-1)
+                # print("gumbel softmax: ",pis[0].max(dim=-1)[1])
+                # pis = F.softmax(self.add_gumbel(pis),dim=-1).long()
+
+                # print(torch.stack(pis,dim=1).shape, self.batch_size, mb_obs.shape)
+
+                mb_values = [self.critics[a_i](
+                                                mb_obs.reshape(nbatch_train, self.n_agents, self.args.history, 4, 72, 96)[:,a_i,:,:3].reshape(nbatch_train, -1, 72, 96),
+                                                gumbel_pis,
+                                                ).squeeze() for a_i in range(self.n_agents)]
+                mb_values = torch.stack(mb_values, dim=1)            
+
+                # print(mb_returns.shape, mb_values.shape, mb_actions.shape)
                 # start to calculate the value loss...
-                value_loss = (mb_returns - mb_values).pow(2).mean()
+                value_loss = (mb_returns - mb_values).pow(2).mean(dim=0)
                 # start to calculate the policy loss
                 with torch.no_grad():
-                    _, old_pis = self.old_net(mb_obs)
+                    old_pis = [self.actors_target[a_i](mb_obs[:,a_i]) for a_i in range(self.n_agents)]
+                    old_log_prob = [self.evaluate_actions(old_pis[a_i],mb_actions[:,a_i])[0] for a_i in range(self.n_agents)]
+                    old_pis = torch.stack(old_pis,dim=1)
+                    old_log_prob = torch.cat(old_log_prob,dim=1)
+                    
                     # get the old log probs
-                    old_log_prob, _ = evaluate_actions(old_pis, mb_actions)
+                    # old_log_prob, _ = self.evaluate_actions(old_pis, mb_actions)
                     old_log_prob = old_log_prob.detach()
                 # evaluate the current policy
-                log_prob, ent_loss = evaluate_actions(pis, mb_actions)
+                log_prob = []
+                ent_loss = []
+
+                for a_i in range(self.n_agents):
+                    lprob, ent = self.evaluate_actions(pis[a_i], mb_actions[:,a_i])
+                    log_prob.append(lprob)
+                    ent_loss.append(ent)
+
+                log_prob = torch.cat(log_prob,dim=1)
+                ent_loss = torch.stack(ent_loss)
+
+                # print(log_prob.shape, ent_loss.shape, old_log_prob.shape)
+
                 prob_ratio = torch.exp(log_prob - old_log_prob)
                 # surr1
                 surr1 = prob_ratio * mb_advs
                 surr2 = torch.clamp(prob_ratio, 1 - self.args.clip, 1 + self.args.clip) * mb_advs
-                policy_loss = -torch.min(surr1, surr2).mean()
+
+                # print(surr1.shape, surr2.shape)
+                policy_loss = -torch.min(surr1, surr2).mean(dim=0)
+                # print("policy loss: ", policy_loss.shape, "value_loss: ", value_loss.shape, "ent_loss: ",ent_loss.shape)
+
                 # final total loss
                 total_loss = policy_loss + self.args.vloss_coef * value_loss - ent_loss * self.args.ent_coef
+
+                if self.args.tie_actor_wts:
+                    self.actors_optimizer.zero_grad()
+                else:
+                    for a_i in range(self.n_agents):
+                        self.actors_optimizer[a_i].zero_grad()
+
+                if self.args.tie_critic_wts:
+                    self.critics_optimizer.zero_grad()
+                else:
+                    for a_i in range(self.n_agents):
+
+                        self.critics_optimizer[a_i].zero_grad()
+
+                for a_i in range(self.n_agents):
+                    if a_i == self.n_agents - 1:
+                        total_loss[a_i].backward()
+                    else:
+                        total_loss[a_i].backward(retain_graph=True)
+
                 # clear the grad buffer
-                self.optimizer.zero_grad()
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.net.parameters(), self.args.max_grad_norm)
-                # update
-                self.optimizer.step()
-        return policy_loss.item(), value_loss.item(), ent_loss.item()
+                if self.args.tie_critic_wts:
+                    self.scale_shared_grads(self.critic)
+                    torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.max_grad_norm_critic)
+                    self.critics_optimizer.step()
+                else:
+                    for a_i in range(self.n_agents):
+                        torch.nn.utils.clip_grad_norm_(self.critics[a_i].parameters(), self.args.max_grad_norm_critic)
+                        self.critics_optimizer[a_i].step()
+
+                if self.args.tie_actor_wts:
+                    self.scale_shared_grads(self.actor)
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.max_grad_norm_actor)
+                    self.actors_optimizer.step()
+                else:
+                    for a_i in range(self.n_agents):
+                        torch.nn.utils.clip_grad_norm_(self.actors[a_i].parameters(), self.args.max_grad_norm_actor)
+                        self.actors_optimizer[a_i].step()
+
+        return policy_loss.detach().numpy(), value_loss.detach().numpy(), ent_loss.detach().numpy()
+
+    def scale_shared_grads(self, model):
+        """
+        Scale gradients for parameters that are shared since they accumulate
+        gradients from the critic loss function multiple times
+        """
+        for p in model.parameters():
+            if p.grad is not None:
+                p.grad.data.mul_(1. / self.n_agents)
 
     # convert the numpy array to tensors
     def _get_tensors(self, obs):
@@ -270,3 +379,46 @@ class mappo_agent:
         adjust_lr = self.args.lr * lr_frac
         for param_group in self.optimizer.param_groups:
              param_group['lr'] = adjust_lr
+
+    def select_actions(self, pi):
+        actions = Categorical(logits=pi).sample()
+        # return actions
+        return actions.detach().cpu().numpy().squeeze()
+
+    # evaluate actions
+    def evaluate_actions(self, pi, actions):
+        cate_dist = Categorical(logits=pi)
+        log_prob = cate_dist.log_prob(actions).unsqueeze(-1)
+        entropy = cate_dist.entropy().mean()
+        return log_prob, entropy
+
+    def hard_update_target_network(self, local_network, target_network):
+        #print("hard update")
+        target_network.load_state_dict(local_network.state_dict())
+
+    def add_gumbel(self, o_t, eps=1e-10, gpu=0):
+        """Add o_t by a vector sampled from Gumbel(0,1)"""
+        u = torch.zeros(o_t.size(-1))
+
+        #u = u.to(self.args.device)
+            
+        u.uniform_(0, 1)
+        g_t = -torch.log(-torch.log(u + eps) + eps)
+
+        #g_t = g_t.to(self.args.device)
+        print("uniform: ",g_t[0].max(dim=-1)[1])
+        gumbel_t = o_t + g_t
+        return gumbel_t
+
+if __name__ == '__main__':
+
+
+    args = get_args()
+
+    envs = SubprocVecEnv([(lambda _i=i: create_single_football_env(args)) for i in range(args.num_workers)], context=None)
+    mappo_trainer = mappo_agent(envs, args)
+    mappo_trainer.learn()
+
+    envs.close()
+
+        

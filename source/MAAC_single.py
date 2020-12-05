@@ -295,7 +295,7 @@ class MAAC:
                 # if dist.get_rank() == 0:
                     print("current buffer size: ", len(self.memory))
 
-            self.log.info("iter: {} | episode: {} | duration: {} \n mean episode reward among workers: {} \n running rewards: Mean: {}, Std: {}".format(i, self.episode_no, t, np.mean(episode_reward,axis=0), np.mean(self.running_reward, axis=(0,1)), np.std(self.running_reward, axis=(0,1))))
+            self.log.info("iter: {} | episode: {} | duration: {} \t mean episode reward among workers: {} \t running rewards: Mean: {}, Std: {}".format(i, self.episode_no, t, episode_reward, np.mean(self.running_reward, axis=0), np.std(self.running_reward, axis=0)))
             self.tbx.add_scalar('rewards/total_reward', np.mean(episode_reward), i)
             self.tbx.add_scalar('rewards/running_reward', np.mean(self.running_reward), i)
 
