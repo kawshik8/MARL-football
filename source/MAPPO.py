@@ -14,8 +14,9 @@ from train_example import create_single_football_env
 from collections import deque
 
 class mappo_agent:
-    def __init__(self, envs, args):
+    def __init__(self, envs, args, env):
         self.envs = envs 
+        self.env = env
         self.args = args
         self.batch_size = args.batch_size
         # define the newtork...
@@ -61,31 +62,59 @@ class mappo_agent:
         else:
             self.critics_optimizer = torch.optim.Adam(self.critic.parameters(),lr=args.lr)
 
-        # check saving folder..
-        if not os.path.exists(self.args.save_dir):
-            os.mkdir(self.args.save_dir)
+        
+        no = 1
+        while os.path.exists(self.args.log_dir + self.args.env_name + "_" + str(no)): 
+            no +=1
+        
+        self.tbx = SummaryWriter(self.args.log_dir + self.args.env_name + "_" + str(no))
+
         # env folder..
         self.model_path = os.path.join(self.args.save_dir, self.args.env_name)
         if not os.path.exists(self.model_path):
             os.mkdir(self.model_path)
+
+        # check saving folder..
+        if not os.path.exists(self.args.save_dir):
+            os.mkdir(self.args.save_dir)
+        
         # logger folder
         if not os.path.exists(self.args.log_dir):
             os.mkdir(self.args.log_dir)
-        self.log_path = self.args.log_dir + self.args.env_name + '.log'
+        self.log_path = self.args.log_dir + self.args.env_name + "_" + str(no) + '/' + 'logs.log'
+
         # get the observation
         self.batch_ob_shape = (self.args.num_workers * self.args.nsteps, ) + self.envs.observation_space.shape
         self.obs = np.zeros((self.args.num_workers, ) + self.envs.observation_space.shape, dtype=self.envs.observation_space.dtype.name)
         self.obs[:] = self.envs.reset()
         self.dones = torch.tensor([False for _ in range(self.args.num_workers)])
 
-        self.log_path = self.args.log_dir + self.args.env_name + '.log'
         self.logger = config_logger(self.log_path)
 
-        no = 1
-        while os.path.exists(self.args.log_dir + self.args.env_name + "_" + str(no)): 
-            no +=1
+    def test(self):
 
-        self.tbx = SummaryWriter(self.args.log_dir + self.args.env_name + "_" + str(no))
+
+        total_reward = 0
+        for episode in range(100):
+            obs = self.env.reset()
+            episode_reward = 0
+            while True:
+                action = self.env.action_space.sample()
+                # print(action.shape)
+
+                obs, rewards, dones, _ = self.env.step(action)
+
+                episode_reward += rewards
+
+                if dones:
+                    break
+
+            total_reward += episode_reward
+
+
+        print(total_reward / 100)
+
+
 
     # start to train the network...
     def learn(self):
@@ -93,12 +122,16 @@ class mappo_agent:
         # get the reward to calculate other informations
         episode_rewards = torch.zeros([self.args.num_workers, 2])
         final_rewards = torch.zeros([self.args.num_workers, 2])
+        
+        episodes_done = np.zeros((self.args.num_workers,1))
 
         running_reward = deque([], maxlen=100)
         for update in range(num_updates):
             mb_obs, mb_rewards, mb_actions, mb_dones, mb_values = [], [], [], [], []
             if self.args.lr_decay:
                 self._adjust_learning_rate(update, num_updates)
+            episode_wise_rewards = torch.zeros([self.args.num_workers, 2])
+            episodes_done = np.zeros((self.args.num_workers,1))
             for step in range(self.args.nsteps):
                 with torch.no_grad():
                     # get tensors
@@ -133,6 +166,7 @@ class mappo_agent:
                 # start to excute the actions in the environment
                 obs, rewards, dones, _ = self.envs.step(input_actions.numpy())
                 # print(rewards.shape)
+                episode_wise_rewards += rewards
                 mb_rewards.append(rewards)
 
                 # update dones
@@ -145,21 +179,34 @@ class mappo_agent:
                 for n, done in enumerate(dones):
                     if done:
                         self.obs[n] = self.obs[n] * 0
+                        episodes_done[n] += 1
                 self.obs = obs
 
                 # process the rewards part -- display the rewards on the screen
                 # print("rewards: ",rewards.shape)
                 rewards = torch.tensor(rewards, dtype=torch.float32)
                 
-                
+                # for n, done in enumerate(dones):
+                #     if done:
+                #         states[n] = states[n] * 0
+                #         # print("episodes_done",episodes_done)
+                #         episodes_done[n] += 1
+                #         self.episode_no += 1
+
+                # print("rewards: ",rewards)
                 episode_rewards += rewards
+                
                 masks = torch.tensor([[0.0] if done_ else [1.0] for done_ in dones], dtype=torch.float32)
                 final_rewards *= masks
                 final_rewards += (1 - masks) * episode_rewards
                 episode_rewards *= masks
 
+                # print("episode ",episode_rewards)
+                # print("final ",final_rewards)
+
             # print(episode_rewards)
-            running_reward.append(final_rewards.numpy())
+            episode_wise_rewards = np.where(episodes_done > 0, episode_wise_rewards / episodes_done, episode_wise_rewards)
+            running_reward.append(episode_wise_rewards)
             # print(running_reward)
             # print(np.stack(running_reward).shape)
 
@@ -416,7 +463,9 @@ if __name__ == '__main__':
     args = get_args()
 
     envs = SubprocVecEnv([(lambda _i=i: create_single_football_env(args)) for i in range(args.num_workers)], context=None)
-    mappo_trainer = mappo_agent(envs, args)
+    env = create_single_football_env(args)
+    mappo_trainer = mappo_agent(envs, args, env)
+    mappo_trainer.test()
     mappo_trainer.learn()
 
     envs.close()
