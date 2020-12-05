@@ -27,6 +27,7 @@ def get_args():
     parse.add_argument('--max-grad-norm-actor', type=float, default=0.5, help='grad norm')
 
     parse.add_argument('--display-interval', type=int, default=100, help='the interval that display log information')
+    parse.add_argument('--dump-frequency', type=int, default=250, help='the interval that dumps video logs information')
     parse.add_argument('--log-dir', type=str, default='logs/')
     parse.add_argument('--soft-update', action='store_true', help='soft update vs hard update')
 
@@ -34,7 +35,8 @@ def get_args():
 
     ############ multi agent stuff ############
 
-    parse.add_argument('--n-agents', type=int, default=2, help='no of agents to control')
+    parse.add_argument('--ln-agents', type=int, default=2, help='no of agents on the left team to control')
+    parse.add_argument('--rn-agents', type=int, default=0, help='no of agents on the right team to control')
     parse.add_argument('--action-dim', type=int, default=32, help='hidden dim of action rep')
     parse.add_argument('--tie-actor-wts', type=int, default=1, help='share weights for actor networks')
     parse.add_argument('--tie-critic-wts', type=int, default=1, help='share weights for critic networks')

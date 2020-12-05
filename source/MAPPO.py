@@ -19,26 +19,25 @@ class mappo_agent:
         self.env = env
         self.args = args
         self.batch_size = args.batch_size
+        self.n_agents = args.ln_agents
         # define the newtork...
 
-        self.global_state_actor = backbone(args.history, nchannels=4)#Global_State_Net(args.history, nagents=args.n_agents)
-        self.global_state_critic = backbone(args.history, nchannels=3)#Global_State_Net(args.history, nagents=args.n_agents)
+        self.global_state_actor = backbone(args.history, nchannels=4)
+        self.global_state_critic = backbone(args.history, nchannels=3)
 
         if args.tie_actor_wts:
             self.actor = Actor(args.history, 19, global_state_net = self.global_state_actor)
         if args.tie_critic_wts:
-            self.critic = Critic(args.history, args.action_dim, args.n_agents, nactions = 19, global_state_net = self.global_state_critic)
+            self.critic = Critic(args.history, args.action_dim, self.n_agents, nactions = 19, global_state_net = self.global_state_critic)
 
-        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(args.n_agents)]
-        self.critics = [Critic(args.history, args.action_dim, args.n_agents, nactions = 19) if not args.tie_critic_wts else self.critic for i in range(args.n_agents)]
+        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(self.n_agents)]
+        self.critics = [Critic(args.history, args.action_dim, self.n_agents, nactions = 19) if not args.tie_critic_wts else self.critic for i in range(self.n_agents)]
 
         # print(self.actor)
         # print(self.critic)
 
         self.actors_target = copy.deepcopy(self.actors)
         self.critics_target = copy.deepcopy(self.critics)
-
-        self.n_agents = args.n_agents
 
         self.use_cuda = args.cuda
         # if use the cuda...
@@ -90,6 +89,7 @@ class mappo_agent:
         self.dones = torch.tensor([False for _ in range(self.args.num_workers)])
 
         self.logger = config_logger(self.log_path)
+        self.episodes_done = 0
 
     def test(self):
 
@@ -120,8 +120,8 @@ class mappo_agent:
     def learn(self):
         num_updates = self.args.total_frames // (self.args.nsteps * self.args.num_workers)
         # get the reward to calculate other informations
-        episode_rewards = torch.zeros([self.args.num_workers, 2])
-        final_rewards = torch.zeros([self.args.num_workers, 2])
+        episode_rewards = torch.zeros([self.args.num_workers, self.n_agents])
+        final_rewards = torch.zeros([self.args.num_workers, self.n_agents])
         
         episodes_done = np.zeros((self.args.num_workers,1))
 
@@ -130,7 +130,7 @@ class mappo_agent:
             mb_obs, mb_rewards, mb_actions, mb_dones, mb_values = [], [], [], [], []
             if self.args.lr_decay:
                 self._adjust_learning_rate(update, num_updates)
-            episode_wise_rewards = torch.zeros([self.args.num_workers, 2])
+            episode_wise_rewards = torch.zeros([self.args.num_workers, self.n_agents])
             episodes_done = np.zeros((self.args.num_workers,1))
             for step in range(self.args.nsteps):
                 with torch.no_grad():
@@ -205,7 +205,10 @@ class mappo_agent:
                 # print("final ",final_rewards)
 
             # print(episode_rewards)
+            # print(episodes_done, episode_wise_rewards)
+            self.episodes_done += episodes_done.sum()
             episode_wise_rewards = np.where(episodes_done > 0, episode_wise_rewards / episodes_done, episode_wise_rewards)
+            # print(episode_wise_rewards)
             running_reward.append(episode_wise_rewards)
             # print(running_reward)
             # print(np.stack(running_reward).shape)
@@ -254,9 +257,9 @@ class mappo_agent:
             # print("advs, returns :", mb_advs.shape, mb_returns.shape)
             # after compute the returns, let's process the rollouts
             mb_obs = mb_obs.swapaxes(0, 1).reshape(self.batch_ob_shape)
-            mb_actions = mb_actions.swapaxes(0, 1).reshape(-1,2)
-            mb_returns = mb_returns.swapaxes(0, 1).reshape(-1,2)
-            mb_advs = mb_advs.swapaxes(0, 1).reshape(-1,2)
+            mb_actions = mb_actions.swapaxes(0, 1).reshape(-1,self.n_agents)
+            mb_returns = mb_returns.swapaxes(0, 1).reshape(-1,self.n_agents)
+            mb_advs = mb_advs.swapaxes(0, 1).reshape(-1,self.n_agents)
             # print("after :", mb_obs.shape, mb_actions.shape, mb_returns.shape, mb_advs.shape)
 
             # before update the network, the old network will try to load the weights
@@ -443,20 +446,6 @@ class mappo_agent:
         #print("hard update")
         target_network.load_state_dict(local_network.state_dict())
 
-    def add_gumbel(self, o_t, eps=1e-10, gpu=0):
-        """Add o_t by a vector sampled from Gumbel(0,1)"""
-        u = torch.zeros(o_t.size(-1))
-
-        #u = u.to(self.args.device)
-            
-        u.uniform_(0, 1)
-        g_t = -torch.log(-torch.log(u + eps) + eps)
-
-        #g_t = g_t.to(self.args.device)
-        print("uniform: ",g_t[0].max(dim=-1)[1])
-        gumbel_t = o_t + g_t
-        return gumbel_t
-
 if __name__ == '__main__':
 
 
@@ -465,7 +454,7 @@ if __name__ == '__main__':
     envs = SubprocVecEnv([(lambda _i=i: create_single_football_env(args)) for i in range(args.num_workers)], context=None)
     env = create_single_football_env(args)
     mappo_trainer = mappo_agent(envs, args, env)
-    mappo_trainer.test()
+    # mappo_trainer.test()
     mappo_trainer.learn()
 
     envs.close()

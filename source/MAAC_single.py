@@ -101,7 +101,7 @@ class MAAC:
         self.start_steps = args.start_steps
         self.tau = args.polyak_tau
         self.soft_update = args.soft_update
-        self.n_agents = args.n_agents
+        self.n_agents = args.ln_agents
 
         self.tbx = SummaryWriter(args.save_dir)
         
@@ -120,10 +120,10 @@ class MAAC:
             self.actor = Actor(args.history, 19, global_state_net = self.global_state_actor)
         if args.tie_critic_wts:
             self.global_state_critic = backbone(args.history, nchannels=3)
-            self.critic = Critic(args.history, args.action_dim, args.n_agents, nactions = 19, global_state_net = self.global_state_critic, out_dim = self.n_actions)
+            self.critic = Critic(args.history, args.action_dim, self.n_agents, nactions = 19, global_state_net = self.global_state_critic, out_dim = self.n_actions)
 
-        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(args.n_agents)]
-        self.critics = [Critic(args.history, args.action_dim, args.n_agents, nactions = 19, out_dim = self.n_actions) if not args.tie_critic_wts else self.critic for i in range(args.n_agents)]
+        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(self.n_agents)]
+        self.critics = [Critic(args.history, args.action_dim, self.n_agents, nactions = 19, out_dim = self.n_actions) if not args.tie_critic_wts else self.critic for i in range(self.n_agents)]
 
         # print(self.actor)
         # print(self.critic)
@@ -543,7 +543,7 @@ if __name__ == '__main__':
 
     lock = torch.multiprocessing.Lock()
 
-    memory = ReplayMemory(capacity=args.buffer_size, history=args.history, nagents = args.n_agents, lock=lock)
+    memory = ReplayMemory(capacity=args.buffer_size, history=args.history, nagents = args.ln_agents, lock=lock)
     # memory.share_memory()
 
     env = create_single_football_env(args)

@@ -39,11 +39,11 @@ class ReplayMemory:
         self.capacity = capacity
         self.history = history 
         self.nagents = nagents
-        self.states = np.zeros((int(capacity), nagents, history * 4, 72, 96))
-        self.next_states = np.zeros((int(capacity), nagents, history * 4, 72, 96))
-        self.actions = np.zeros((int(capacity), nagents))
-        self.rewards = np.zeros((int(capacity), nagents))
-        self.dones = np.zeros((int(capacity), nagents))
+        self.states = torch.zeros((int(capacity), nagents, history * 4, 72, 96))
+        self.next_states = torch.zeros((int(capacity), nagents, history * 4, 72, 96))
+        self.actions = torch.zeros((int(capacity), nagents))
+        self.rewards = torch.zeros((int(capacity), nagents))
+        self.dones = torch.zeros((int(capacity), nagents))
         self.position = 0
         self.current_capacity = 0
         self.lock = lock
@@ -52,11 +52,11 @@ class ReplayMemory:
         # for i in range(states.shape[0]):
 
         self.lock.acquire()
-        self.states[self.position] = states
-        self.next_states[self.position] = (next_states)
-        self.rewards[self.position] = (rewards)
-        self.dones[self.position] = dones
-        self.actions[self.position] = (actions)
+        self.states[self.position] = torch.from_numpy(states)
+        self.next_states[self.position] = torch.from_numpy(next_states)
+        self.rewards[self.position] = torch.from_numpy(rewards)
+        self.dones[self.position] = (dones)
+        self.actions[self.position] = torch.from_numpy(actions)
 
         
         self.position = int((self.position + 1) % self.capacity)
@@ -100,7 +100,7 @@ class MAAC:
         self.start_steps = args.start_steps
         self.tau = args.polyak_tau
         self.soft_update = args.soft_update
-        self.n_agents = args.n_agents
+        self.n_agents = args.ln_agents
 
         self.tbx = SummaryWriter(args.save_dir)
         
@@ -119,10 +119,10 @@ class MAAC:
             self.actor = Actor(args.history, 19, global_state_net = self.global_state_actor)
         if args.tie_critic_wts:
             self.global_state_critic = backbone(args.history, nchannels=3)
-            self.critic = Critic(args.history, args.action_dim, args.n_agents, nactions = 19, global_state_net = self.global_state_critic, out_dim = self.n_actions)
+            self.critic = Critic(args.history, args.action_dim, self.n_agents, nactions = 19, global_state_net = self.global_state_critic, out_dim = self.n_actions)
 
-        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(args.n_agents)]
-        self.critics = [Critic(args.history, args.action_dim, args.n_agents, nactions = 19, out_dim = self.n_actions) if not args.tie_critic_wts else self.critic for i in range(args.n_agents)]
+        self.actors = [Actor(args.history, 19) if not args.tie_actor_wts else self.actor for i in range(self.n_agents)]
+        self.critics = [Critic(args.history, args.action_dim, self.n_agents, nactions = 19, out_dim = self.n_actions) if not args.tie_critic_wts else self.critic for i in range(self.n_agents)]
 
         # print(self.actor)
         # print(self.critic)
@@ -168,20 +168,20 @@ class MAAC:
 
         # print(torch.stack(states).shape, torch.stack(rewards).shape, torch.cat(actions).shape, torch.stack(next_states).shape, torch.stack(dones).shape)
 
-        states = torch.from_numpy(states).float().to(self.device)
+        states = states.float().to(self.device)
         # states = states.view(self.batch_size, self.n_states * self.history)
         
         # print(torch.cat(batch.rewards)[0])
-        rewards = torch.from_numpy(rewards).float().to(self.device)
+        rewards = rewards.float().to(self.device)
         # rewards = rewards.view(self.batch_size, 1)
         
-        dones = torch.from_numpy(dones).int().to(self.device)
+        dones = dones.int().to(self.device)
         # dones = dones.view(self.batch_size, 1)
 
-        actions = torch.from_numpy(actions).long().to(self.device)
+        actions = (actions).long().to(self.device)
         # actions = actions.view(self.batch_size, self.n_actions)
 
-        next_states = torch.from_numpy(next_states).float().to(self.device)
+        next_states = (next_states).float().to(self.device)
         # next_states = next_states.view(self.batch_size, self.n_states * self.history)
 
         # print(states.shape, actions.shape, next_states.shape, rewards.shape)
@@ -286,7 +286,7 @@ class MAAC:
                 # print(t, len(self.memory))
             # episode_reward = np.where(episodes_done > 0, episode_reward / episodes_done, episode_reward)
             
-            print(episode_reward)
+            # print(episode_reward)
             self.running_reward.append(episode_reward)
             # print(self.running_reward)
 
@@ -294,11 +294,13 @@ class MAAC:
                 if dist.get_rank() == 0:
                     print("current buffer size: ", len(self.memory))
 
-            self.log.info("iter: {} | episode: {} | duration: {} \n mean episode reward among workers: {} \n running rewards: Mean: {}, Std: {}".format(i, self.episode_no, t, np.mean(episode_reward,axis=0), np.mean(self.running_reward, axis=(0,1)), np.std(self.running_reward, axis=(0,1))))
-            self.tbx.add_scalar('rewards/total_reward', np.mean(episode_reward), i)
-            self.tbx.add_scalar('rewards/running_reward', np.mean(self.running_reward), i)
+            if dist.get_rank() == 0:
+                self.log.info("iter: {} | episode: {} | duration: {} | buffer size: {} | mean episode reward among workers: {} | running rewards: Mean: {}, Std: {}".format(i, self.episode_no, t, len(self.memory), np.mean(episode_reward,axis=0), np.mean(self.running_reward, axis=(0,1)), np.std(self.running_reward, axis=(0,1))))
+                self.tbx.add_scalar('rewards/total_reward', np.mean(episode_reward), i)
+                self.tbx.add_scalar('rewards/running_reward', np.mean(self.running_reward), i)
 
             if not self.args.test_model and i % 25 < self.args.num_workers:
+              if dist.get_rank() == 0:
                 torch.save({"actor": ([self.actors[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.actor.state_dict()), 
                             "critic": ([self.critics[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.critic.state_dict()),
                             "actor_opt": ([self.actors_optimizer[i].state_dict() for i in range(self.n_agents)] if not self.args.tie_actor_wts else self.actors_optimizer.state_dict()),
@@ -323,7 +325,7 @@ class MAAC:
 
         # Calculating the Q-Value target
         with torch.no_grad():
-            next_actions, next_log_probs, _, _ = self.choose_actions(next_states)
+            next_actions, next_log_probs, _, _ = self.choose_actions(next_states.numpy())
 
         q_losses = []
         grad_norms = []
@@ -351,7 +353,7 @@ class MAAC:
             else:
                 self.critics_optimizer[i].zero_grad()
                 q_loss.backward()
-                grad_norm = torch.nn.utils.clip_grad_norm(self.critics[i].parameters(), self.args.max_grad_norm_critic)
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.critics[i].parameters(), self.args.max_grad_norm_critic)
                 grad_norms += [grad_norm]
                 pool_average_gradients(self.critics[i])
                 self.critics_optimizer[i].step()
@@ -360,19 +362,21 @@ class MAAC:
             q_loss = sum(q_losses)
             q_loss.backward()
             self.scale_shared_grads(self.critic)
-            grad_norm = torch.nn.utils.clip_grad_norm(self.critic.parameters(), self.args.max_grad_norm_critic * self.n_agents)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.max_grad_norm_critic * self.n_agents)
             pool_average_gradients(self.critic)
             self.critics_optimizer.step()
         
             if self.log is not None:
-                self.tbx.add_scalar('losses/q_loss', q_loss, self.num_updates)
-                self.tbx.add_scalar('grad_norms/q', grad_norm, self.num_updates)
+                if dist.get_rank() == 0:
+                    self.tbx.add_scalar('losses/q_loss', q_loss, self.num_updates)
+                    self.tbx.add_scalar('grad_norms/q', grad_norm, self.num_updates)
 
         else:
             if self.log is not None:
-                for i in range(self.n_agents):
-                    self.tbx.add_scalar('losses/q_loss_' + str(i), q_losses[i], self.num_updates)
-                    self.tbx.add_scalar('grad_norms/q_' + str(i), grad_norms[i], self.num_updates)
+                if dist.get_rank() == 0:
+                    for i in range(self.n_agents):
+                        self.tbx.add_scalar('losses/q_loss_' + str(i), q_losses[i], self.num_updates)
+                        self.tbx.add_scalar('grad_norms/q_' + str(i), grad_norms[i], self.num_updates)
             
     def update_actors(self, batch):
         
@@ -384,7 +388,7 @@ class MAAC:
         all_entropies = []
 
         with torch.no_grad():
-            all_actions, all_log_probs, all_entropies, all_probs = self.choose_actions(states)
+            all_actions, all_log_probs, all_entropies, all_probs = self.choose_actions(states.numpy())
 
         losses = []
         for i in range(self.n_agents):
@@ -413,25 +417,27 @@ class MAAC:
                 param.requires_grad = True
 
             if not self.args.tie_actor_wts:
-                grad_norm = torch.nn.utils.clip_grad_norm(self.actors[i].parameters(), self.args.max_grad_norm_actor)
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.actors[i].parameters(), self.args.max_grad_norm_actor)
                 pool_average_gradients(self.actors[i])
                 self.actors_optimizer[i].step()
 
                 if self.log is not None:
-                    self.tbx.add_scalar('losses/actor_loss_' + str(i), loss, self.num_updates)
-                    self.tbx.add_scalar('grad_norms/pi_' + str(i), grad_norm, self.num_updates)
+                    if dist.get_rank() == 0:
+                        self.tbx.add_scalar('losses/actor_loss_' + str(i), loss, self.num_updates)
+                        self.tbx.add_scalar('grad_norms/pi_' + str(i), grad_norm, self.num_updates)
 
         if self.args.tie_actor_wts:
             loss = sum(losses)
             loss.backward()
             self.scale_shared_grads(self.actor)
-            grad_norm = torch.nn.utils.clip_grad_norm(self.actor.parameters(), self.args.max_grad_norm_actor * self.n_agents)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.args.max_grad_norm_actor * self.n_agents)
             pool_average_gradients(self.actor)
             self.actors_optimizer.step()
 
             if self.log is not None:
-                self.tbx.add_scalar('losses/actor_loss', loss, self.num_updates)
-                self.tbx.add_scalar('grad_norms/pi', grad_norm, self.num_updates)
+                if dist.get_rank() == 0:
+                    self.tbx.add_scalar('losses/actor_loss', loss, self.num_updates)
+                    self.tbx.add_scalar('grad_norms/pi', grad_norm, self.num_updates)
 
         self.num_updates += 1
 
@@ -444,7 +450,7 @@ class MAAC:
 
         # print(obs.shape)
         for i in range(self.n_agents):
-            action = self.actors[i](torch.tensor(obs[:,i], dtype=torch.float))
+            action = self.actors[i](torch.from_numpy(obs[:,i]).float())
             if self.args.test_model:
                 action = torch.max(action,dim=-1)[1]
             else:
@@ -492,12 +498,13 @@ class MAAC:
 """ Gradient averaging. """
 def pool_average_gradients(model):
     size = float(dist.get_world_size())
-    print("world size: ", size)
+    # print("world size: ", size)
     for param in model.parameters():
-        print("before: ", param.grad.data)
-        dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
-        print("after: ",param.grad.data)
-        param.grad.data /= size
+        if param.grad is not None:
+            # print("before: ", param.grad.data)
+            dist.all_reduce(param.grad.data, op=dist.ReduceOp.SUM)
+            # print("after: ",param.grad.data)
+            param.grad.data /= size
 
 def make_parallel_env(args, n_rollout_threads, seed):
     def get_env_fn(rank):
@@ -542,7 +549,7 @@ if __name__ == '__main__':
 
     lock = torch.multiprocessing.Lock()
 
-    memory = ReplayMemory(capacity=args.buffer_size, history=args.history, nagents = args.n_agents, lock=lock)
+    memory = ReplayMemory(capacity=args.buffer_size, history=args.history, nagents = args.ln_agents, lock=lock)
     memory.share_memory()
 
     processes = []

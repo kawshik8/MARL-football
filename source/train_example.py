@@ -12,7 +12,7 @@ import os
 def create_single_football_env(args):
     """Creates gfootball environment."""
     env = football_env.create_environment(\
-            env_name=args.env_name, representation='extracted', number_of_left_players_agent_controls=args.n_agents, rewards='scoring', write_video=True, write_full_episode_dumps=True, logdir='./logs/videos', dump_frequency=25)#, with_checkpoints=False, 
+            env_name=args.env_name, representation='extracted', number_of_left_players_agent_controls=args.ln_agents, number_of_right_players_agent_controls=args.rn_agents, rewards='scoring', write_video=True, write_full_episode_dumps=True, logdir='./logs/videos', dump_frequency=args.dump_frequency)#, with_checkpoints=False, 
             #)
     # env = football_env.create_environment(\
     #         env_name=args.env_name, representation='extracted', rewards='scoring', write_video=True, write_full_episode_dumps=True, logdir='./logs/videos', dump_frequency=25)#, with_checkpoints=False, 
